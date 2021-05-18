@@ -1,0 +1,106 @@
+---
+title: "web scrap - yahoo"
+author: "Jiaying Wu"
+date: "18/05/2021"
+output: html_document
+---
+
+```{r library}
+#library
+library(tidyverse)
+library(xml2)
+library(rvest)
+library(lubridate)
+library(tsibble)
+library(fable)
+library(feasts)
+library(gridExtra)
+theme_update(plot.title = element_text(hjust = 0.5))
+```
+ 
+
+```{r function}
+#Convert date to unix time
+unix_time <- function(date){
+  as.numeric(as.POSIXct(date), format="%Y-%m-%d")
+}
+
+
+#Extract the data from yahoo, convert to data.frame and clean up. Might be some authority. It can only get data of 100 trading days.
+get_data <- function(stock, start_time, end_time){
+  df <- paste0("https://au.finance.yahoo.com/quote/", 
+               stock, 
+               "/history?period1=", 
+               start_time, 
+               "&period2=", 
+               end_time, 
+               "&interval=1d&filter=history&frequency=1d") %>% 
+    read_html() %>% 
+    html_table() %>% 
+    map_df(bind_cols) %>%
+    rename(Close = `Close*`) %>%
+    select(Date, Close)
+  df$Close <- suppressWarnings(as.numeric(as.character(df$Close)))
+  df <- df %>% filter(!is.na(Close)) 
+  df$Date <- dmy(df$Date)
+  df <- df %>% mutate("Trading_day" = NROW(df):1) 
+  return(df)
+}
+
+#skewness
+skewness <- function(seq){
+  skewness <- mean(((seq - mean(seq))/sqrt(var(seq)))^3)
+  return(skewness)
+}
+
+#kurtosis
+kurtosis <- function(seq){
+  kurtosis <- mean(((seq - mean(seq))/sqrt(var(seq)))^4)
+  return(kurtosis)
+}
+
+#Compute mean, variance, skewness and kurtosis of the stock
+statistical_moment <- function(stock_list, start_time, end_time){
+  mean_list <- c()
+  variance_list <- c()
+  skewness_list <- c()
+  kurtosis_list <- c()
+  n <- NROW(stock_list)
+  i <- 1
+  repeat{
+    df <- get_data(stock = stock_list[i], start_time = start_time, end_time = end_time)
+    j <- NROW(df)
+    series <- df$Close
+    log_return <- log(series[1:(j-1)]) - log(series[2:j])
+    mean_list <- c(mean_list, mean(log_return))
+    variance_list <- c(variance_list, var(log_return))
+    skewness_list <- c(skewness_list, skewness(log_return))
+    kurtosis_list <- c(kurtosis_list, kurtosis(log_return))
+    i <- i + 1
+    if(i == (n+1)){
+      break
+    }
+  }
+  return(data_frame("Code" = stock_list, "Mean" = mean_list, "Variance" = variance_list, 
+                    "Skewness" = skewness_list, "Kurtosis" = kurtosis_list))
+}
+```
+
+
+```{r stock_code}
+stock_list <- read.csv("20190501-asx200.csv") %>%
+  select(Code) %>%
+  mutate(Code = paste0(Code, ".AX")) %>%
+  as.list()
+```
+
+
+```{r statistical_moment,eval=FALSE}
+#Compute the statistical moment of all ASX200 in half year until "2019-03-22"
+date_1 <- as.Date("2019-03-22")
+end_time_1 <- unix_time(date_1)
+start_time_1 <- unix_time(date_1-180)
+moment_asx200 <- statistical_moment(stock_list = stock_list$Code, 
+                                    start_time = start_time_1, 
+                                    end_time = end_time_1)
+```
